@@ -143,7 +143,7 @@ runs:
       id: docker_check
       shell: bash
       run: |
-        if command -v docker &> /dev/null; then
+        if docker info &> /dev/null; then
           echo "available=true" >> $GITHUB_OUTPUT
         else
           echo "available=false" >> $GITHUB_OUTPUT
