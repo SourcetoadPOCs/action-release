@@ -143,11 +143,25 @@ runs:
       id: docker_check
       shell: bash
       run: |
-        if docker info &> /dev/null; then
+        echo "::group::Docker availability check"
+        echo "docker command exists: $(command -v docker && echo 'yes' || echo 'no')"
+        echo "DOCKER_HOST: ${DOCKER_HOST:-'(not set)'}"
+        if docker info 2>&1; then
+          echo "Docker daemon is running"
           echo "available=true" >> $GITHUB_OUTPUT
         else
+          echo "Docker daemon is NOT available (exit code: $?)"
           echo "available=false" >> $GITHUB_OUTPUT
         fi
+        echo "Output set to: $(grep available $GITHUB_OUTPUT | tail -1)"
+        echo "::endgroup::"
+
+    - name: Debug docker_check output
+      if: runner.os != 'macOS' && runner.os != 'Windows'
+      shell: bash
+      run: |
+        echo "docker_check.outputs.available = '${{ steps.docker_check.outputs.available }}'"
+        echo "runner.os = '${{ runner.os }}'"
 
     # For actions running on a linux runner with Docker, we use a docker
     # approach as it's faster and encapsulates everything needed
