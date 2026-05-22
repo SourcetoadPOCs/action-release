@@ -143,31 +143,24 @@ inputs:
 runs:
   using: 'composite'
   steps:
-    # Check if Docker is available on Linux runners.
-    # Some Linux runners (e.g. ubuntu-slim) don't include Docker.
+    # Check if a Docker daemon is available. Some runners (e.g. ubuntu-slim)
+    # have the CLI but no daemon. We use `docker info` rather than
+    # `command -v docker` to verify the daemon is actually running.
     - name: Check for Docker availability
       if: runner.os != 'macOS' && runner.os != 'Windows'
       id: docker_check
       shell: bash
       run: |
-        echo "::group::Docker availability check"
-        echo "docker command exists: $(command -v docker && echo 'yes' || echo 'no')"
-        echo "DOCKER_HOST: ${DOCKER_HOST:-'(not set)'}"
-        if docker info 2>&1; then
-          echo "Docker daemon is running"
+        if docker info &> /dev/null; then
           echo "available=true" >> $GITHUB_OUTPUT
         else
-          echo "Docker daemon is NOT available (exit code: $?)"
           echo "available=false" >> $GITHUB_OUTPUT
         fi
-        echo "Output set to: $(grep available $GITHUB_OUTPUT | tail -1)"
-        echo "::endgroup::"
 
-    # For actions running on a runner with Docker, we use a docker
-    # approach as it's faster and encapsulates everything needed
-    # to run the action.
-    # We use `docker run` instead of `uses: docker://` because GitHub Actions
-    # pulls docker images at job setup time regardless of `if` conditions.
+    # When Docker is available we run inside a container for speed and isolation.
+    # We call `docker run` explicitly instead of `uses: docker://` because
+    # GitHub Actions pulls docker images at job setup time regardless of
+    # step-level `if` conditions.
     - name: Run docker image
       if: runner.os != 'macOS' && runner.os != 'Windows' && steps.docker_check.outputs.available == 'true'
       shell: bash
@@ -239,18 +232,15 @@ runs:
           -e INPUT_DISABLE_SAFE_DIRECTORY \
           ghcr.io/getsentry/action-release-image:fix-eng-7567-shell-injection-vulnerability
 
-    # For actions running on macos/windows runners, or linux runners without
-    # Docker (e.g. ubuntu-slim), we use a composite action approach which
-    # allows us to install the arch specific sentry-cli binary that's needed
-    # for the runner.
-    # This is slower than the docker approach but works everywhere.
-    - name: Mark GitHub workspace a safe directory in git
-      if: ${{ (runner.os == 'macOS' || runner.os == 'Windows' || steps.docker_check.outputs.available == 'false')  && inputs.disable_safe_directory != 'true' }}
-      shell: bash
-      run: |
-        git config --global --add safe.directory "$GITHUB_WORKSPACE"
+    # --- Non-Docker path ---
+    # For macOS, Windows, or Linux runners without Docker (e.g. ubuntu-slim),
+    # we install Node + @sentry/cli and run the bundled dist/index.js directly.
 
-    # Check if a compatible Node version (>=20) is already installed
+    - name: Mark GitHub workspace a safe directory in git
+      if: ${{ (runner.os == 'macOS' || runner.os == 'Windows' || steps.docker_check.outputs.available == 'false') && inputs.disable_safe_directory != 'true' }}
+      shell: bash
+      run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
     - name: Check existing Node version
       if: runner.os == 'macOS' || runner.os == 'Windows' || steps.docker_check.outputs.available == 'false'
       id: node_check
@@ -268,7 +258,6 @@ runs:
           echo "compatible=false" >> $GITHUB_OUTPUT
         fi
 
-    # Only install Node if the runner doesn't already have a compatible version
     - name: Save current Node version
       if: (runner.os == 'macOS' || runner.os == 'Windows' || steps.docker_check.outputs.available == 'false') && steps.node_check.outputs.compatible != 'true'
       id: node_version
@@ -307,19 +296,9 @@ runs:
       run: npm install --no-package-lock @sentry/cli@^2.4
       working-directory: ${{ github.action_path }}
 
-    - name: Save Sentry CLI cache
-      if: (runner.os == 'macOS' || runner.os == 'Windows' || steps.docker_check.outputs.available == 'false') && inputs.cache == 'true' && steps.sentry_cli_cache.outputs.cache-hit != 'true'
-      uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-      with:
-        path: ${{ github.action_path }}/node_modules
-        key: sentry-cli-${{ runner.os }}-${{ runner.arch }}-${{ steps.sentry_cli_hash.outputs.hash }}
-
     - name: Run Release Action
       if: runner.os == 'macOS' || runner.os == 'Windows' || steps.docker_check.outputs.available == 'false'
       env:
-        # Composite actions don't pass the outer action's inputs
-        # down into these steps, so we have to replicate all inputs to be accessible
-        # via @actions/core
         INPUT_ENVIRONMENT: ${{ inputs.environment }}
         INPUT_INJECT: ${{ inputs.inject }}
         INPUT_SOURCEMAPS: ${{ inputs.sourcemaps }}
@@ -346,7 +325,13 @@ runs:
       run: npm run start
       working-directory: ${{ github.action_path }}
 
-    # Restore the original Node version only if we changed it
+    - name: Save Sentry CLI cache
+      if: (runner.os == 'macOS' || runner.os == 'Windows' || steps.docker_check.outputs.available == 'false') && inputs.cache == 'true' && steps.sentry_cli_cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+      with:
+        path: ${{ github.action_path }}/node_modules
+        key: sentry-cli-${{ runner.os }}-${{ runner.arch }}-${{ steps.sentry_cli_hash.outputs.hash }}
+
     - name: Restore original Node version
       if: steps.node_check.outputs.compatible != 'true' && steps.node_version.outputs.NODE_VERSION != ''
       uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
