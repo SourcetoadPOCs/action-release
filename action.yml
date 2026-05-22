@@ -278,19 +278,26 @@ runs:
         node-version: 24.14.1
         package-manager-cache: false
 
-    - name: Cache Sentry CLI
+    - name: Restore Sentry CLI cache
       if: runner.os == 'macOS' || runner.os == 'Windows' || steps.docker_check.outputs.available == 'false'
       id: sentry_cli_cache
-      uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+      uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
       with:
         path: ${{ github.action_path }}/node_modules
-        key: sentry-cli-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(format('{0}/package.json', github.action_path)) }}
+        key: sentry-cli-${{ runner.os }}-${{ runner.arch }}-2.4
 
     - name: Install Sentry CLI v2
       if: (runner.os == 'macOS' || runner.os == 'Windows' || steps.docker_check.outputs.available == 'false') && steps.sentry_cli_cache.outputs.cache-hit != 'true'
       shell: bash
       run: npm install --no-package-lock @sentry/cli@^2.4
       working-directory: ${{ github.action_path }}
+
+    - name: Save Sentry CLI cache
+      if: (runner.os == 'macOS' || runner.os == 'Windows' || steps.docker_check.outputs.available == 'false') && steps.sentry_cli_cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+      with:
+        path: ${{ github.action_path }}/node_modules
+        key: sentry-cli-${{ runner.os }}-${{ runner.arch }}-2.4
 
     - name: Run Release Action
       if: runner.os == 'macOS' || runner.os == 'Windows' || steps.docker_check.outputs.available == 'false'
