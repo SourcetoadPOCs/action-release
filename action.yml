@@ -136,11 +136,24 @@ inputs:
 runs:
   using: 'composite'
   steps:
-    # For actions running on a linux runner, we use a docker
+    # Check if Docker is available on Linux runners.
+    # Some Linux runners (e.g. ubuntu-slim) don't include Docker.
+    - name: Check for Docker availability
+      if: runner.os == 'Linux'
+      id: docker_check
+      shell: bash
+      run: |
+        if command -v docker &> /dev/null; then
+          echo "available=true" >> $GITHUB_OUTPUT
+        else
+          echo "available=false" >> $GITHUB_OUTPUT
+        fi
+
+    # For actions running on a linux runner with Docker, we use a docker
     # approach as it's faster and encapsulates everything needed
     # to run the action.
     - name: Run docker image
-      if: runner.os != 'macOS' && runner.os != 'Windows'
+      if: runner.os == 'Linux' && steps.docker_check.outputs.available == 'true'
       env:
         # Composite actions don't pass the outer action's inputs
         # down into these steps, so we have to replicate all inputs to be accessible
@@ -169,19 +182,20 @@ runs:
         INPUT_DISABLE_SAFE_DIRECTORY: ${{ inputs.disable_safe_directory }}
       uses: docker://ghcr.io/getsentry/action-release-image:fix-eng-7567-shell-injection-vulnerability
 
-    # For actions running on macos or windows runners, we use a composite
-    # action approach which allows us to install the arch specific sentry-cli
-    # binary that's needed for the runner.
-    # This is slower than the docker approach but runs on macos and windows.
+    # For actions running on macos/windows runners, or linux runners without
+    # Docker (e.g. ubuntu-slim), we use a composite action approach which
+    # allows us to install the arch specific sentry-cli binary that's needed
+    # for the runner.
+    # This is slower than the docker approach but works everywhere.
     - name: Mark GitHub workspace a safe directory in git
-      if: ${{ (runner.os == 'macOS' || runner.os == 'Windows')  && inputs.disable_safe_directory != 'true' }}
+      if: ${{ (runner.os == 'macOS' || runner.os == 'Windows' || steps.docker_check.outputs.available == 'false')  && inputs.disable_safe_directory != 'true' }}
       shell: bash
       run: |
         git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
     # Save the current Node version before changing it
     - name: Save current Node version
-      if: runner.os == 'macOS' || runner.os == 'Windows'
+      if: runner.os == 'macOS' || runner.os == 'Windows' || steps.docker_check.outputs.available == 'false'
       id: node_version
       shell: bash
       run: |
@@ -190,7 +204,7 @@ runs:
         fi
 
     - name: Setup node
-      if: runner.os == 'macOS' || runner.os == 'Windows'
+      if: runner.os == 'macOS' || runner.os == 'Windows' || steps.docker_check.outputs.available == 'false'
       uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
       with:
         # setup-node doesn't allow absolute paths, so we can't
@@ -200,13 +214,13 @@ runs:
         package-manager-cache: false
 
     - name: Install Sentry CLI v2
-      if: runner.os == 'macOS' || runner.os == 'Windows'
+      if: runner.os == 'macOS' || runner.os == 'Windows' || steps.docker_check.outputs.available == 'false'
       shell: bash
       run: npm install --no-package-lock @sentry/cli@^2.4
       working-directory: ${{ github.action_path }}
 
     - name: Run Release Action
-      if: runner.os == 'macOS' || runner.os == 'Windows'
+      if: runner.os == 'macOS' || runner.os == 'Windows' || steps.docker_check.outputs.available == 'false'
       env:
         # Composite actions don't pass the outer action's inputs
         # down into these steps, so we have to replicate all inputs to be accessible
@@ -239,7 +253,7 @@ runs:
 
     # Restore the original Node version
     - name: Restore original Node version
-      if: (runner.os == 'macOS' || runner.os == 'Windows') && steps.node_version.outputs.NODE_VERSION != ''
+      if: (runner.os == 'macOS' || runner.os == 'Windows' || steps.docker_check.outputs.available == 'false') && steps.node_version.outputs.NODE_VERSION != ''
       uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
       with:
         node-version: ${{ steps.node_version.outputs.NODE_VERSION }}
