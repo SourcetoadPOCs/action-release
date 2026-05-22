@@ -139,7 +139,7 @@ runs:
     # Check if Docker is available on Linux runners.
     # Some Linux runners (e.g. ubuntu-slim) don't include Docker.
     - name: Check for Docker availability
-      if: runner.os == 'Linux'
+      if: runner.os != 'macOS' && runner.os != 'Windows'
       id: docker_check
       shell: bash
       run: |
@@ -153,7 +153,7 @@ runs:
     # approach as it's faster and encapsulates everything needed
     # to run the action.
     - name: Run docker image
-      if: runner.os == 'Linux' && steps.docker_check.outputs.available == 'true'
+      if: runner.os != 'macOS' && runner.os != 'Windows' && steps.docker_check.outputs.available == 'true'
       env:
         # Composite actions don't pass the outer action's inputs
         # down into these steps, so we have to replicate all inputs to be accessible
