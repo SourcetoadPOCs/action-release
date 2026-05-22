@@ -118,13 +118,6 @@ inputs:
       Directory to collect sentry release information from.
       Useful when collecting information from a non-standard checkout directory.
     required: false
-  disable_telemetry:
-    description: |-
-      The action sends telemetry data and crash reports to Sentry. This helps
-      us improve the action.
-      You can turn this off by setting this flag.
-    default: false
-    required: false
   disable_safe_directory:
     description: |-
       The action needs access to the repo it runs in. For that we need to
@@ -134,171 +127,37 @@ inputs:
     required: false
   cache:
     description: |-
-      Cache the Sentry CLI binary to speed up subsequent runs.
-      Only applies when not using the Docker path (macOS, Windows,
-      or Linux without Docker).
+      Cache the sentry-cli binary to speed up subsequent runs.
     default: true
     required: false
 
 runs:
   using: 'composite'
   steps:
-    # Check if a Docker daemon is available. Some runners (e.g. ubuntu-slim)
-    # have the CLI but no daemon. We use `docker info` rather than
-    # `command -v docker` to verify the daemon is actually running.
-    - name: Check for Docker availability
-      if: runner.os != 'macOS' && runner.os != 'Windows'
-      id: docker_check
-      shell: bash
-      run: |
-        if docker info &> /dev/null; then
-          echo "available=true" >> $GITHUB_OUTPUT
-        else
-          echo "available=false" >> $GITHUB_OUTPUT
-        fi
-
-    # When Docker is available we run inside a container for speed and isolation.
-    # We call `docker run` explicitly instead of `uses: docker://` because
-    # GitHub Actions pulls docker images at job setup time regardless of
-    # step-level `if` conditions.
-    - name: Run docker image
-      if: runner.os != 'macOS' && runner.os != 'Windows' && steps.docker_check.outputs.available == 'true'
-      shell: bash
-      env:
-        INPUT_ENVIRONMENT: ${{ inputs.environment }}
-        INPUT_INJECT: ${{ inputs.inject }}
-        INPUT_SOURCEMAPS: ${{ inputs.sourcemaps }}
-        INPUT_DIST: ${{ inputs.dist }}
-        INPUT_FINALIZE: ${{ inputs.finalize }}
-        INPUT_IGNORE_MISSING: ${{ inputs.ignore_missing }}
-        INPUT_IGNORE_EMPTY: ${{ inputs.ignore_empty }}
-        INPUT_STARTED_AT: ${{ inputs.started_at }}
-        INPUT_VERSION: ${{ inputs.version }}
-        INPUT_RELEASE: ${{ inputs.release }}
-        INPUT_VERSION_PREFIX: ${{ inputs.version_prefix }}
-        INPUT_RELEASE_PREFIX: ${{ inputs.release_prefix }}
-        INPUT_SET_COMMITS: ${{ inputs.set_commits }}
-        INPUT_REPO: ${{ inputs.repo }}
-        INPUT_COMMIT: ${{ inputs.commit }}
-        INPUT_PREVIOUS_COMMIT: ${{ inputs.previous_commit }}
-        INPUT_PROJECTS: ${{ inputs.projects }}
-        INPUT_URL_PREFIX: ${{ inputs.url_prefix }}
-        INPUT_STRIP_COMMON_PREFIX: ${{ inputs.strip_common_prefix }}
-        INPUT_WORKING_DIRECTORY: ${{ inputs.working_directory }}
-        INPUT_DISABLE_TELEMETRY: ${{ inputs.disable_telemetry }}
-        INPUT_DISABLE_SAFE_DIRECTORY: ${{ inputs.disable_safe_directory }}
-      run: |
-        docker run --rm \
-          --workdir /github/workspace \
-          -v "$GITHUB_WORKSPACE:/github/workspace" \
-          -v "/home/runner/work/_temp/_github_home:/github/home" \
-          -v "/home/runner/work/_temp/_github_workflow:/github/workflow" \
-          -v "/home/runner/work/_temp/_runner_file_commands:/github/file_commands" \
-          -e HOME="/github/home" \
-          -e GITHUB_ACTIONS \
-          -e GITHUB_ACTION \
-          -e GITHUB_WORKSPACE="/github/workspace" \
-          -e GITHUB_SHA \
-          -e GITHUB_REF \
-          -e GITHUB_REPOSITORY \
-          -e GITHUB_SERVER_URL \
-          -e GITHUB_OUTPUT="/github/file_commands/set_output_$(date +%s)" \
-          -e SENTRY_AUTH_TOKEN \
-          -e SENTRY_ORG \
-          -e SENTRY_PROJECT \
-          -e SENTRY_URL \
-          -e SENTRY_LOG_LEVEL \
-          -e INPUT_ENVIRONMENT \
-          -e INPUT_INJECT \
-          -e INPUT_SOURCEMAPS \
-          -e INPUT_DIST \
-          -e INPUT_FINALIZE \
-          -e INPUT_IGNORE_MISSING \
-          -e INPUT_IGNORE_EMPTY \
-          -e INPUT_STARTED_AT \
-          -e INPUT_VERSION \
-          -e INPUT_RELEASE \
-          -e INPUT_VERSION_PREFIX \
-          -e INPUT_RELEASE_PREFIX \
-          -e INPUT_SET_COMMITS \
-          -e INPUT_REPO \
-          -e INPUT_COMMIT \
-          -e INPUT_PREVIOUS_COMMIT \
-          -e INPUT_PROJECTS \
-          -e INPUT_URL_PREFIX \
-          -e INPUT_STRIP_COMMON_PREFIX \
-          -e INPUT_WORKING_DIRECTORY \
-          -e INPUT_DISABLE_TELEMETRY \
-          -e INPUT_DISABLE_SAFE_DIRECTORY \
-          ghcr.io/getsentry/action-release-image:fix-eng-7567-shell-injection-vulnerability
-
-    # --- Non-Docker path ---
-    # For macOS, Windows, or Linux runners without Docker (e.g. ubuntu-slim),
-    # we install Node + @sentry/cli and run the bundled dist/index.js directly.
-
     - name: Mark GitHub workspace a safe directory in git
-      if: ${{ (runner.os == 'macOS' || runner.os == 'Windows' || steps.docker_check.outputs.available == 'false') && inputs.disable_safe_directory != 'true' }}
+      if: inputs.disable_safe_directory != 'true'
       shell: bash
       run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
-    - name: Check existing Node version
-      if: runner.os == 'macOS' || runner.os == 'Windows' || steps.docker_check.outputs.available == 'false'
-      id: node_check
-      shell: bash
-      run: |
-        if command -v node &> /dev/null; then
-          NODE_MAJOR=$(node --version | sed 's/v\([0-9]*\).*/\1/')
-          echo "current=$(node --version | sed 's/v//')" >> $GITHUB_OUTPUT
-          if [ "$NODE_MAJOR" -ge 20 ]; then
-            echo "compatible=true" >> $GITHUB_OUTPUT
-          else
-            echo "compatible=false" >> $GITHUB_OUTPUT
-          fi
-        else
-          echo "compatible=false" >> $GITHUB_OUTPUT
-        fi
-
-    - name: Save current Node version
-      if: (runner.os == 'macOS' || runner.os == 'Windows' || steps.docker_check.outputs.available == 'false') && steps.node_check.outputs.compatible != 'true'
-      id: node_version
-      shell: bash
-      run: |
-        if [ -n "${{ steps.node_check.outputs.current }}" ]; then
-          echo "NODE_VERSION=${{ steps.node_check.outputs.current }}" >> $GITHUB_OUTPUT
-        fi
-
-    - name: Setup node
-      if: (runner.os == 'macOS' || runner.os == 'Windows' || steps.docker_check.outputs.available == 'false') && steps.node_check.outputs.compatible != 'true'
-      uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
-      with:
-        node-version: 24.14.1
-        package-manager-cache: false
-
-    - name: Compute Sentry CLI cache key
-      if: (runner.os == 'macOS' || runner.os == 'Windows' || steps.docker_check.outputs.available == 'false') && inputs.cache == 'true'
-      id: sentry_cli_hash
-      shell: bash
-      run: |
-        HASH=$(sha256sum "${{ github.action_path }}/package.json" | cut -d' ' -f1)
-        echo "hash=$HASH" >> $GITHUB_OUTPUT
-
-    - name: Restore Sentry CLI cache
-      if: (runner.os == 'macOS' || runner.os == 'Windows' || steps.docker_check.outputs.available == 'false') && inputs.cache == 'true'
-      id: sentry_cli_cache
+    - name: Restore sentry-cli cache
+      if: inputs.cache == 'true'
+      id: cli_cache
       uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
       with:
-        path: ${{ github.action_path }}/node_modules
-        key: sentry-cli-${{ runner.os }}-${{ runner.arch }}-${{ steps.sentry_cli_hash.outputs.hash }}
+        path: ${{ github.action_path }}/.bin
+        key: sentry-cli-${{ runner.os }}-${{ runner.arch }}
 
-    - name: Install Sentry CLI v2
-      if: (runner.os == 'macOS' || runner.os == 'Windows' || steps.docker_check.outputs.available == 'false') && steps.sentry_cli_cache.outputs.cache-hit != 'true'
+    - name: Install sentry-cli
+      if: steps.cli_cache.outputs.cache-hit != 'true'
       shell: bash
-      run: npm install --no-package-lock @sentry/cli@^2.4
-      working-directory: ${{ github.action_path }}
+      run: |
+        mkdir -p "${{ github.action_path }}/.bin"
+        curl -sL https://sentry.io/get-cli/ | INSTALL_DIR="${{ github.action_path }}/.bin" bash
 
     - name: Run Release Action
-      if: runner.os == 'macOS' || runner.os == 'Windows' || steps.docker_check.outputs.available == 'false'
+      shell: bash
       env:
+        PATH: ${{ github.action_path }}/.bin:$PATH
         INPUT_ENVIRONMENT: ${{ inputs.environment }}
         INPUT_INJECT: ${{ inputs.inject }}
         INPUT_SOURCEMAPS: ${{ inputs.sourcemaps }}
@@ -319,25 +178,14 @@ runs:
         INPUT_URL_PREFIX: ${{ inputs.url_prefix }}
         INPUT_STRIP_COMMON_PREFIX: ${{ inputs.strip_common_prefix }}
         INPUT_WORKING_DIRECTORY: ${{ inputs.working_directory }}
-        INPUT_DISABLE_TELEMETRY: ${{ inputs.disable_telemetry }}
-        INPUT_DISABLE_SAFE_DIRECTORY: ${{ inputs.disable_safe_directory }}
-      shell: bash
-      run: npm run start
-      working-directory: ${{ github.action_path }}
+      run: ${{ github.action_path }}/release.sh
 
-    - name: Save Sentry CLI cache
-      if: (runner.os == 'macOS' || runner.os == 'Windows' || steps.docker_check.outputs.available == 'false') && inputs.cache == 'true' && steps.sentry_cli_cache.outputs.cache-hit != 'true'
+    - name: Save sentry-cli cache
+      if: inputs.cache == 'true' && steps.cli_cache.outputs.cache-hit != 'true'
       uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
       with:
-        path: ${{ github.action_path }}/node_modules
-        key: sentry-cli-${{ runner.os }}-${{ runner.arch }}-${{ steps.sentry_cli_hash.outputs.hash }}
-
-    - name: Restore original Node version
-      if: steps.node_check.outputs.compatible != 'true' && steps.node_version.outputs.NODE_VERSION != ''
-      uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
-      with:
-        node-version: ${{ steps.node_version.outputs.NODE_VERSION }}
-        package-manager-cache: false
+        path: ${{ github.action_path }}/.bin
+        key: sentry-cli-${{ runner.os }}-${{ runner.arch }}
 
 branding:
   icon: 'triangle'
