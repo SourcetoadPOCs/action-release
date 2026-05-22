@@ -156,22 +156,15 @@ runs:
         echo "Output set to: $(grep available $GITHUB_OUTPUT | tail -1)"
         echo "::endgroup::"
 
-    - name: Debug docker_check output
-      if: runner.os != 'macOS' && runner.os != 'Windows'
-      shell: bash
-      run: |
-        echo "docker_check.outputs.available = '${{ steps.docker_check.outputs.available }}'"
-        echo "runner.os = '${{ runner.os }}'"
-
-    # For actions running on a linux runner with Docker, we use a docker
+    # For actions running on a runner with Docker, we use a docker
     # approach as it's faster and encapsulates everything needed
     # to run the action.
+    # We use `docker run` instead of `uses: docker://` because GitHub Actions
+    # pulls docker images at job setup time regardless of `if` conditions.
     - name: Run docker image
       if: runner.os != 'macOS' && runner.os != 'Windows' && steps.docker_check.outputs.available == 'true'
+      shell: bash
       env:
-        # Composite actions don't pass the outer action's inputs
-        # down into these steps, so we have to replicate all inputs to be accessible
-        # via @actions/core here and in the `Run Release Action` step further down.
         INPUT_ENVIRONMENT: ${{ inputs.environment }}
         INPUT_INJECT: ${{ inputs.inject }}
         INPUT_SOURCEMAPS: ${{ inputs.sourcemaps }}
@@ -194,7 +187,50 @@ runs:
         INPUT_WORKING_DIRECTORY: ${{ inputs.working_directory }}
         INPUT_DISABLE_TELEMETRY: ${{ inputs.disable_telemetry }}
         INPUT_DISABLE_SAFE_DIRECTORY: ${{ inputs.disable_safe_directory }}
-      uses: docker://ghcr.io/getsentry/action-release-image:fix-eng-7567-shell-injection-vulnerability
+      run: |
+        docker run --rm \
+          --workdir /github/workspace \
+          -v "$GITHUB_WORKSPACE:/github/workspace" \
+          -v "/home/runner/work/_temp/_github_home:/github/home" \
+          -v "/home/runner/work/_temp/_github_workflow:/github/workflow" \
+          -v "/home/runner/work/_temp/_runner_file_commands:/github/file_commands" \
+          -e HOME="/github/home" \
+          -e GITHUB_ACTIONS \
+          -e GITHUB_ACTION \
+          -e GITHUB_WORKSPACE="/github/workspace" \
+          -e GITHUB_SHA \
+          -e GITHUB_REF \
+          -e GITHUB_REPOSITORY \
+          -e GITHUB_SERVER_URL \
+          -e GITHUB_OUTPUT="/github/file_commands/set_output_$(date +%s)" \
+          -e SENTRY_AUTH_TOKEN \
+          -e SENTRY_ORG \
+          -e SENTRY_PROJECT \
+          -e SENTRY_URL \
+          -e SENTRY_LOG_LEVEL \
+          -e INPUT_ENVIRONMENT \
+          -e INPUT_INJECT \
+          -e INPUT_SOURCEMAPS \
+          -e INPUT_DIST \
+          -e INPUT_FINALIZE \
+          -e INPUT_IGNORE_MISSING \
+          -e INPUT_IGNORE_EMPTY \
+          -e INPUT_STARTED_AT \
+          -e INPUT_VERSION \
+          -e INPUT_RELEASE \
+          -e INPUT_VERSION_PREFIX \
+          -e INPUT_RELEASE_PREFIX \
+          -e INPUT_SET_COMMITS \
+          -e INPUT_REPO \
+          -e INPUT_COMMIT \
+          -e INPUT_PREVIOUS_COMMIT \
+          -e INPUT_PROJECTS \
+          -e INPUT_URL_PREFIX \
+          -e INPUT_STRIP_COMMON_PREFIX \
+          -e INPUT_WORKING_DIRECTORY \
+          -e INPUT_DISABLE_TELEMETRY \
+          -e INPUT_DISABLE_SAFE_DIRECTORY \
+          ghcr.io/getsentry/action-release-image:fix-eng-7567-shell-injection-vulnerability
 
     # For actions running on macos/windows runners, or linux runners without
     # Docker (e.g. ubuntu-slim), we use a composite action approach which
